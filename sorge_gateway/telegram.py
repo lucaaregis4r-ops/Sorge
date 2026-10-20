@@ -1,7 +1,8 @@
-"""Módulo de integração com a Telegram Bot API via long polling e Smart Router."""
+"""Módulo de integração com a Telegram Bot API via long polling, Smart Router e n8n."""
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+import httpx
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -19,14 +20,13 @@ from sorge_gateway.config import (
 )
 from sorge_gateway.database import (
     get_db_connection,
-    get_events_for_date,
     get_upcoming_events,
     is_update_processed,
     mark_update_processed,
     record_usage,
-    update_event_status,
 )
 from sorge_gateway.logger import log_event, logger
+from sorge_gateway.n8n import default_n8n_client
 from sorge_gateway.router import Intent, RouteType, get_current_date, route_message
 from sorge_gateway.usage import format_usage_report, get_usage_statistics
 
@@ -61,6 +61,15 @@ async def check_database_status() -> bool:
         logger.error(f"Falha de integridade no banco de dados: {e}")
         return False
 
+async def check_n8n_status() -> bool:
+    """Verifica se a instância local do n8n está ativa."""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            res = await client.get("http://localhost:5678/healthz")
+            return res.status_code == 200
+    except Exception:
+        return False
+
 def format_events_list(events: list[dict], title: str) -> str:
     """Formata lista de compromissos para exibição no Telegram."""
     if not events:
@@ -69,15 +78,16 @@ def format_events_list(events: list[dict], title: str) -> str:
     linhas = [f"📅 {title}:"]
     for ev in events:
         # Extrai horário se start_at tiver ISO timestamp
-        start_raw = ev.get("start_at", "")
+        start_raw = ev.get("start_at") or ev.get("start", "")
         hora_str = ""
-        if "T" in start_raw:
+        if "T" in str(start_raw):
             try:
-                dt = datetime.fromisoformat(start_raw)
+                dt = datetime.fromisoformat(str(start_raw))
                 hora_str = dt.strftime("%H:%M") + " - "
             except Exception:
                 hora_str = ""
-        linhas.append(f"• [#{ev['id']}] {hora_str}{ev['title']}")
+        ev_id = ev.get("id") or ev.get("calendar_event_id") or "?"
+        linhas.append(f"• [#{ev_id}] {hora_str}{ev.get('title') or ev.get('summary', 'Compromisso')}")
     return "\n".join(linhas)
 
 # --- Handlers de Comandos e Roteamento ---
@@ -119,6 +129,7 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     mark_update_processed(update_id)
     db_ok = await check_database_status()
+    n8n_ok = await check_n8n_status()
     uptime = get_uptime_str()
 
     record_usage(
@@ -130,12 +141,13 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     log_event(route="command", intent="STATUS", used_llm=False, status="success", update_id=update_id)
 
     status_db = "OK" if db_ok else "ERRO"
+    status_n8n = "OK" if n8n_ok else "Offline (fallback local)"
     texto = (
         "🟢 Sorge online (Modo Local)\n\n"
         f"• Telegram: OK (long polling)\n"
         f"• Banco SQLite: {status_db}\n"
+        f"• n8n: {status_n8n}\n"
         f"• Smart Router: OK (Zero-LLM)\n"
-        f"• n8n: Pendente (Fase 3)\n"
         f"• OpenClaw: Pendente (Fase 4)\n\n"
         f"⏱️ Ativo há: {uptime}\n"
         f"📍 Fuso horário: {TIMEZONE}"
@@ -208,7 +220,7 @@ async def today_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     mark_update_processed(update_id)
     cur_date = get_current_date()
-    events = get_events_for_date(cur_date.strftime("%Y-%m-%d"), DATABASE_PATH)
+    events = await default_n8n_client.list_events(cur_date.strftime("%Y-%m-%d"))
 
     record_usage(
         route="command",
@@ -232,9 +244,8 @@ async def tomorrow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     mark_update_processed(update_id)
     cur_date = get_current_date()
-    from datetime import timedelta
     tom_date = cur_date + timedelta(days=1)
-    events = get_events_for_date(tom_date.strftime("%Y-%m-%d"), DATABASE_PATH)
+    events = await default_n8n_client.list_events(tom_date.strftime("%Y-%m-%d"))
 
     record_usage(
         route="command",
@@ -261,7 +272,7 @@ async def agenda_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     route_res = route_message(user_text)
 
     if route_res.target_date:
-        events = get_events_for_date(route_res.target_date.strftime("%Y-%m-%d"), DATABASE_PATH)
+        events = await default_n8n_client.list_events(route_res.target_date.strftime("%Y-%m-%d"))
         titulo = f"Agenda para {route_res.target_date.strftime('%d/%m/%Y')}"
     else:
         events = get_upcoming_events(limit=7, db_path=DATABASE_PATH)
@@ -279,7 +290,7 @@ async def agenda_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(msg)
 
 async def smart_router_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Roteador principal para mensagens livres via Smart Router (Zero-LLM)."""
+    """Roteador principal para mensagens livres via Smart Router (Zero-LLM) e n8n."""
     if not update.effective_user or not is_user_authorized(update.effective_user.id):
         return
 
@@ -313,19 +324,19 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
         await usage_handler(update, context)
         return
 
-    # 4. Rota de Listagem de Eventos determinística
+    # 4. Rota de Listagem de Eventos determinística (via n8n / SQLite)
     if result.intent == Intent.LIST_EVENTS:
         target = result.target_date or get_current_date()
-        events = get_events_for_date(target.strftime("%Y-%m-%d"), DATABASE_PATH)
+        events = await default_n8n_client.list_events(target.strftime("%Y-%m-%d"))
         record_usage("deterministic", False, intent="LIST_EVENTS", telegram_update_id=update_id)
         log_event("deterministic", "LIST_EVENTS", False, "success", update_id=update_id)
         msg = format_events_list(events, f"Agenda para {target.strftime('%d/%m/%Y')}")
         await update.message.reply_text(msg)
         return
 
-    # 5. Rota de Cancelar Evento determinística
+    # 5. Rota de Cancelar Evento determinística (via n8n / SQLite)
     if result.intent == Intent.CANCEL_EVENT and result.target_id:
-        success = update_event_status(result.target_id, "cancelled", DATABASE_PATH)
+        success = await default_n8n_client.delete_event(result.target_id)
         record_usage("deterministic", False, intent="CANCEL_EVENT", telegram_update_id=update_id)
         log_event("deterministic", "CANCEL_EVENT", False, "success" if success else "not_found", update_id=update_id)
         if success:
@@ -334,18 +345,7 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
             await update.message.reply_text(f"⚠️ Compromisso #{result.target_id} não encontrado ou já cancelado.")
         return
 
-    # 6. Rota de Concluir Evento determinística
-    if result.intent == Intent.COMPLETE_EVENT and result.target_id:
-        success = update_event_status(result.target_id, "completed", DATABASE_PATH)
-        record_usage("deterministic", False, intent="COMPLETE_EVENT", telegram_update_id=update_id)
-        log_event("deterministic", "COMPLETE_EVENT", False, "success" if success else "not_found", update_id=update_id)
-        if success:
-            await update.message.reply_text(f"✅ Compromisso #{result.target_id} marcado como concluído.")
-        else:
-            await update.message.reply_text(f"⚠️ Compromisso #{result.target_id} não encontrado.")
-        return
-
-    # 7. Fallback para LLM (Fase 4 - OpenClaw)
+    # 6. Fallback para LLM (Fase 4 - OpenClaw)
     record_usage(
         route="llm_fallback",
         used_llm=True,
