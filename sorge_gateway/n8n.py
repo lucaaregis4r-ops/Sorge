@@ -13,6 +13,7 @@ from sorge_gateway.database import (
     update_event_status,
 )
 from sorge_gateway.logger import logger
+from sorge_gateway.reminders import schedule_reminders_for_event
 
 class N8NClient:
     """Cliente para disparo de workflows de calendário no n8n."""
@@ -67,6 +68,12 @@ class N8NClient:
                         calendar_event_id=calendar_event_id,
                         db_path=self.db_path
                     )
+                    schedule_reminders_for_event(
+                        event_id=local_id,
+                        start_at_iso=start_at,
+                        reminders_minutes=reminders_minutes,
+                        db_path=self.db_path
+                    )
                     return {
                         "id": local_id,
                         "calendar_event_id": calendar_event_id,
@@ -85,6 +92,12 @@ class N8NClient:
             start_at=start_at,
             end_at=end_at,
             calendar_event_id=None,
+            db_path=self.db_path
+        )
+        schedule_reminders_for_event(
+            event_id=local_id,
+            start_at_iso=start_at,
+            reminders_minutes=reminders_minutes,
             db_path=self.db_path
         )
         return {

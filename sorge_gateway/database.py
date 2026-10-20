@@ -161,3 +161,95 @@ def update_event_status(event_id: int, status: str, db_path: Optional[Path] = No
             (status, now, event_id)
         )
         return cursor.rowcount > 0
+
+def get_event_by_id(event_id: int, db_path: Optional[Path] = None) -> Optional[dict]:
+    """Busca um evento pelo seu ID interno."""
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, title, start_at, end_at, status, calendar_event_id FROM events WHERE id = ?",
+            (event_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+# --- Funções para gerenciamento de lembretes (reminders) ---
+
+def create_reminder(
+    event_id: int,
+    send_at: str,
+    channel: str = "telegram",
+    db_path: Optional[Path] = None
+) -> int:
+    """Insere um novo lembrete associado a um evento."""
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO reminders (event_id, send_at, status, channel)
+            VALUES (?, ?, 'pending', ?)
+            """,
+            (event_id, send_at, channel)
+        )
+        return cursor.lastrowid
+
+def get_due_reminders(now_iso: Optional[str] = None, db_path: Optional[Path] = None) -> list[dict]:
+    """Busca lembretes pendentes cujo horário de envio já chegou (send_at <= now)."""
+    current_time = now_iso or datetime.now(ZoneInfo(config.TIMEZONE)).isoformat()
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT r.id, r.event_id, r.send_at, r.status, r.channel,
+                   e.title, e.start_at, e.end_at, e.status as event_status
+            FROM reminders r
+            JOIN events e ON r.event_id = e.id
+            WHERE r.status = 'pending' AND r.send_at <= ? AND e.status = 'active'
+            ORDER BY r.send_at ASC
+            """,
+            (current_time,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_pending_overdue_reminders(now_iso: Optional[str] = None, db_path: Optional[Path] = None) -> list[dict]:
+    """Busca todos os lembretes pendentes atrasados para o startup catch-up."""
+    current_time = now_iso or datetime.now(ZoneInfo(config.TIMEZONE)).isoformat()
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT r.id, r.event_id, r.send_at, r.status, r.channel,
+                   e.title, e.start_at, e.end_at, e.status as event_status
+            FROM reminders r
+            JOIN events e ON r.event_id = e.id
+            WHERE r.status = 'pending' AND r.send_at < ?
+            ORDER BY r.send_at ASC
+            """,
+            (current_time,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+def update_reminder_status(
+    reminder_id: int,
+    status: str,
+    sent_at: Optional[str] = None,
+    db_path: Optional[Path] = None
+) -> bool:
+    """Atualiza o status de um lembrete (ex: 'sent', 'late_sent', 'expired')."""
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE reminders SET status = ?, sent_at = ? WHERE id = ?",
+            (status, sent_at, reminder_id)
+        )
+        return cursor.rowcount > 0
+
+def get_reminders_for_event(event_id: int, db_path: Optional[Path] = None) -> list[dict]:
+    """Retorna todos os lembretes cadastrados para um determinado evento."""
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, event_id, send_at, status, sent_at, channel FROM reminders WHERE event_id = ? ORDER BY send_at ASC",
+            (event_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]

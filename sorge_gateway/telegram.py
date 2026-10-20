@@ -28,6 +28,7 @@ from sorge_gateway.database import (
 from sorge_gateway.logger import log_event, logger
 from sorge_gateway.n8n import default_n8n_client
 from sorge_gateway.openclaw import ActionType, default_openclaw_client
+from sorge_gateway.reminders import reminder_dispatcher_loop, startup_catchup
 from sorge_gateway.router import Intent, RouteType, get_current_date, route_message
 from sorge_gateway.usage import format_usage_report, get_usage_statistics
 
@@ -404,12 +405,20 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
     )
     await update.message.reply_text(msg_clarification)
 
+async def on_post_init(app: Application) -> None:
+    """Executa o startup catch-up e inicia o despachante periódico de lembretes."""
+    if TELEGRAM_ALLOWED_USER_ID:
+        import asyncio
+        logger.info("Executando startup catch-up de lembretes...")
+        await startup_catchup(bot=app.bot, chat_id=TELEGRAM_ALLOWED_USER_ID)
+        asyncio.create_task(reminder_dispatcher_loop(bot=app.bot, chat_id=TELEGRAM_ALLOWED_USER_ID, poll_interval=30))
+
 def build_application() -> Application:
     """Cria e configura a instância do Application do Telegram."""
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN não foi configurado no arquivo .env.")
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(on_post_init).build()
 
     # Comandos
     app.add_handler(CommandHandler("start", start_handler))
