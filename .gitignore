@@ -1,0 +1,30 @@
+# Entorno e dependências
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Dados locais e SQLite
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+!data/.gitkeep
+
+# Logs
+logs/*.log
+!logs/.gitkeep
+
+# Credenciais e variáveis de ambiente
+.env
+credentials/
+*.pem
+*.key
+*.token
+
+# IDEs e SO
+.vscode/
+.idea/
+.DS_Store
