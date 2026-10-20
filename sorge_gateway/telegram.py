@@ -27,6 +27,7 @@ from sorge_gateway.database import (
 )
 from sorge_gateway.logger import log_event, logger
 from sorge_gateway.n8n import default_n8n_client
+from sorge_gateway.openclaw import ActionType, default_openclaw_client
 from sorge_gateway.router import Intent, RouteType, get_current_date, route_message
 from sorge_gateway.usage import format_usage_report, get_usage_statistics
 
@@ -345,20 +346,63 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
             await update.message.reply_text(f"⚠️ Compromisso #{result.target_id} não encontrado ou já cancelado.")
         return
 
-    # 6. Fallback para LLM (Fase 4 - OpenClaw)
-    record_usage(
-        route="llm_fallback",
-        used_llm=True,
-        intent="UNKNOWN",
-        telegram_update_id=update_id,
+    # 6. Roteamento para OpenClaw (Linguagem Natural - Fase 5)
+    cur_date = get_current_date()
+    intent = await default_openclaw_client.interpret_message(
+        user_message=user_text,
+        current_date_str=cur_date.strftime("%Y-%m-%d"),
+        update_id=update_id
     )
-    log_event("llm_fallback", "UNKNOWN", True, "routed_to_openclaw", update_id=update_id)
 
-    await update.message.reply_text(
-        f"📝 Frase recebida: \"{user_text}\"\n\n"
-        "O Smart Router identificou linguagem natural ambígua e encaminhou para interpretação via LLM (Zero-LLM = False).\n"
-        "A execução de ações de criação com o OpenClaw/n8n será ativada na Fase 4 e Fase 5."
+    if intent.is_executable(min_confidence=0.70):
+        if intent.action == ActionType.CREATE_EVENT and intent.title and intent.date:
+            hora_inicio_str = intent.time or "09:00"
+            start_iso = f"{intent.date}T{hora_inicio_str}:00"
+            dur = intent.duration_minutes or 60
+
+            try:
+                dt_start = datetime.fromisoformat(start_iso)
+                dt_end = dt_start + timedelta(minutes=dur)
+                data_formatada = dt_start.strftime("%d/%m/%Y")
+                hora_formatada = f"{dt_start.strftime('%H:%M')}–{dt_end.strftime('%H:%M')}"
+            except Exception:
+                data_formatada = intent.date
+                hora_formatada = hora_inicio_str
+
+            await default_n8n_client.create_event(
+                title=intent.title,
+                start_at=start_iso,
+                duration_minutes=dur,
+                reminders_minutes=intent.reminders
+            )
+
+            resposta = (
+                f"✅ {intent.title} marcado\n"
+                f"📅 {data_formatada}\n"
+                f"🕑 {hora_formatada}"
+            )
+            await update.message.reply_text(resposta)
+            return
+
+        elif intent.action == ActionType.LIST_EVENTS:
+            target_str = intent.date or cur_date.strftime("%Y-%m-%d")
+            events = await default_n8n_client.list_events(target_str)
+            msg = format_events_list(events, f"Agenda para {target_str}")
+            await update.message.reply_text(msg)
+            return
+
+        elif intent.action == ActionType.CANCEL_EVENT and intent.target_id:
+            await default_n8n_client.delete_event(intent.target_id)
+            await update.message.reply_text(f"✅ Compromisso #{intent.target_id} cancelado com sucesso.")
+            return
+
+    # Pedido de esclarecimento em caso de baixa confiança ou dados incompletos
+    msg_clarification = (
+        intent.clarification_needed
+        or "🤔 Não consegui identificar com certeza todos os dados do compromisso (data ou título).\n"
+           "Poderia reenviar especificando o dia e o horário? (Ex: 'marca dentista amanhã às 14h')"
     )
+    await update.message.reply_text(msg_clarification)
 
 def build_application() -> Application:
     """Cria e configura a instância do Application do Telegram."""
