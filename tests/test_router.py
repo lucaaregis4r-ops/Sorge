@@ -38,7 +38,16 @@ def test_commands_routing():
     assert r.route == RouteType.COMMAND and r.intent == Intent.HELP and not r.used_llm
 
     r = route_message("/uso", BASE_DATE)
-    assert r.route == RouteType.COMMAND and r.intent == Intent.USAGE and not r.used_llm
+    assert r.route == RouteType.COMMAND and r.intent == Intent.USAGE and r.period == "hoje" and not r.used_llm
+
+    r = route_message("/uso semana", BASE_DATE)
+    assert r.route == RouteType.COMMAND and r.intent == Intent.USAGE and r.period == "semana"
+
+    r = route_message("/uso mes", BASE_DATE)
+    assert r.route == RouteType.COMMAND and r.intent == Intent.USAGE and r.period == "mes"
+
+    r = route_message("/uso total", BASE_DATE)
+    assert r.route == RouteType.COMMAND and r.intent == Intent.USAGE and r.period == "total"
 
     # Comandos de agenda
     r = route_message("/hoje", BASE_DATE)

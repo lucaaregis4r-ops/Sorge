@@ -205,9 +205,11 @@ async def usage_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         intent="USAGE",
         telegram_update_id=update_id,
     )
-    log_event(route="command", intent="USAGE", used_llm=False, status="success", update_id=update_id)
+    periodo = "hoje"
+    if context.args and len(context.args) > 0:
+        periodo = context.args[0].lower()
 
-    stats = get_usage_statistics(DATABASE_PATH, period="hoje")
+    stats = get_usage_statistics(DATABASE_PATH, period=periodo)
     relatorio = format_usage_report(stats)
     await update.message.reply_text(relatorio)
 
@@ -321,9 +323,12 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
 
     # 3. Rota de Uso determinística
     if result.intent == Intent.USAGE:
+        periodo = result.period or "hoje"
         record_usage("deterministic", False, intent="USAGE", telegram_update_id=update_id)
         log_event("deterministic", "USAGE", False, "success", update_id=update_id)
-        await usage_handler(update, context)
+        stats = get_usage_statistics(DATABASE_PATH, period=periodo)
+        relatorio = format_usage_report(stats)
+        await update.message.reply_text(relatorio)
         return
 
     # 4. Rota de Listagem de Eventos determinística (via n8n / SQLite)

@@ -1,0 +1,75 @@
+{
+  "name": "Sorge - WF-07 Usage Stats",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "usage-stats",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "id": "webhook-usage-stats",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as total_messages, SUM(CASE WHEN used_llm = 0 THEN 1 ELSE 0 END) as zero_llm_total, SUM(CASE WHEN used_llm = 1 THEN 1 ELSE 0 END) as llm_calls_total, COALESCE(SUM(total_tokens), 0) as total_tokens, COALESCE(SUM(estimated_cost_usd), 0.0) as estimated_cost FROM usage_events;"
+      },
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "id": "sqlite-query-usage",
+      "name": "SQLite Query",
+      "credentials": {
+        "sqlite": {
+          "id": "sorge_sqlite_credentials",
+          "name": "Sorge SQLite"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"metrics\": {{ $json }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [440, 0],
+      "id": "respond-webhook",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "SQLite Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQLite Query": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

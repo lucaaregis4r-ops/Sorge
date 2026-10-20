@@ -98,7 +98,19 @@ def route_message(raw_text: str, current_date: Optional[date] = None) -> RouterR
                     return RouterResult(RouteType.COMMAND, Intent.LIST_EVENTS, False, 1.0, target_date=cur_date + timedelta(days=1), period="tomorrow", original_text=raw_text)
             return RouterResult(RouteType.COMMAND, Intent.LIST_EVENTS, False, 1.0, target_date=cur_date, period="upcoming", original_text=raw_text)
         elif cmd == "/uso":
-            return RouterResult(RouteType.COMMAND, Intent.USAGE, False, 1.0, original_text=raw_text)
+            parts = text.split()
+            p = "hoje"
+            if len(parts) > 1:
+                arg = normalize_text(parts[1])
+                if arg in ("semana", "week"):
+                    p = "semana"
+                elif arg in ("mes", "month"):
+                    p = "mes"
+                elif arg in ("total", "tudo"):
+                    p = "total"
+                elif arg == "hoje":
+                    p = "hoje"
+            return RouterResult(RouteType.COMMAND, Intent.USAGE, False, 1.0, period=p, original_text=raw_text)
 
     # 2. Padrões determinísticos em linguagem natural
     norm = normalize_text(text)
@@ -132,8 +144,12 @@ def route_message(raw_text: str, current_date: Optional[date] = None) -> RouterR
         return RouterResult(RouteType.DETERMINISTIC, Intent.HELP, False, 1.0, original_text=raw_text)
     if norm in ("status", "estado"):
         return RouterResult(RouteType.DETERMINISTIC, Intent.STATUS, False, 1.0, original_text=raw_text)
-    if norm in ("uso", "tokens", "consumo"):
-        return RouterResult(RouteType.DETERMINISTIC, Intent.USAGE, False, 1.0, original_text=raw_text)
+
+    # Uso / telemetria em texto puro
+    m_usage = re.fullmatch(r"(?:uso|tokens|consumo)(?:\s+(hoje|semana|mes|total))?", norm)
+    if m_usage:
+        p = m_usage.group(1) or "hoje"
+        return RouterResult(RouteType.DETERMINISTIC, Intent.USAGE, False, 1.0, period=p, original_text=raw_text)
 
     # Consultas de agenda determinísticas
     # Ex: "hoje", "agenda hoje", "o que tenho hoje", "minha agenda hoje", "compromissos hoje"

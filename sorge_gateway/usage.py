@@ -1,5 +1,5 @@
 """Módulo de estatísticas de uso, consumo de tokens e taxa Zero-LLM."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Dict, Any, Optional
@@ -8,15 +8,29 @@ from sorge_gateway import config
 from sorge_gateway.database import get_db_connection, get_db_path
 
 def get_usage_statistics(db_path: Optional[Path] = None, period: str = "hoje") -> Dict[str, Any]:
-    """Calcula estatísticas de uso a partir da tabela usage_events."""
+    """
+    Calcula estatísticas de uso a partir da tabela usage_events para o período especificado:
+    - 'hoje': dia atual
+    - 'semana': desde a segunda-feira da semana atual
+    - 'mes': desde o primeiro dia do mês atual
+    - 'total': histórico completo
+    """
     now = datetime.now(ZoneInfo(config.TIMEZONE))
     target_db = get_db_path(db_path)
-    
-    # Define filtro de data
-    if period == "hoje":
+    period_lower = period.lower()
+
+    if period_lower == "hoje":
         start_filter = now.strftime("%Y-%m-%d")
         query_condition = "created_at >= ?"
         query_params = (f"{start_filter}T00:00:00",)
+    elif period_lower in ("semana", "week"):
+        start_of_week = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+        query_condition = "created_at >= ?"
+        query_params = (f"{start_of_week}T00:00:00",)
+    elif period_lower in ("mes", "mês", "month"):
+        start_of_month = now.strftime("%Y-%m-01")
+        query_condition = "created_at >= ?"
+        query_params = (f"{start_of_month}T00:00:00",)
     else:
         query_condition = "1=1"
         query_params = ()
@@ -69,7 +83,7 @@ def get_usage_statistics(db_path: Optional[Path] = None, period: str = "hoje") -
         top_model = model_row["model"] if model_row else "Nenhum (100% Determinístico)"
 
     return {
-        "period": period,
+        "period": period_lower,
         "total_messages": total,
         "zero_llm_total": zero_llm,
         "llm_calls_total": llm_calls,
@@ -84,8 +98,16 @@ def get_usage_statistics(db_path: Optional[Path] = None, period: str = "hoje") -
 
 def format_usage_report(stats: Dict[str, Any]) -> str:
     """Formata o relatório de uso conforme especificado na Seção 9 do plano."""
-    periodo_str = "HOJE" if stats["period"] == "hoje" else "TOTAL"
-    
+    p = stats.get("period", "hoje").lower()
+    if p == "hoje":
+        periodo_str = "HOJE"
+    elif p in ("semana", "week"):
+        periodo_str = "ESTA SEMANA"
+    elif p in ("mes", "mês", "month"):
+        periodo_str = "ESTE MÊS"
+    else:
+        periodo_str = "TOTAL ACUMULADO"
+
     return (
         f"📊 SORGE — USO {periodo_str}\n\n"
         f"Mensagens processadas: {stats['total_messages']}\n"
@@ -95,5 +117,6 @@ def format_usage_report(stats: Dict[str, Any]) -> str:
         f"Tokens de saída: {stats['output_tokens']:,}\n"
         f"Total: {stats['total_tokens']:,}\n\n"
         f"Modelo mais usado: {stats['top_model']}\n"
-        f"Custo estimado: US$ {stats['estimated_cost_usd']:.2f}"
+        f"Custo estimado: US$ {stats['estimated_cost_usd']:.2f}\n\n"
+        f"⚡ Zero-LLM Rate: {stats['zero_llm_rate']:.1f}% resolvidas sem IA"
     )
