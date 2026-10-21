@@ -103,7 +103,7 @@ class OpenClawClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 90.0,
+        timeout: float = 120.0,
         db_path: Optional[Path] = None
     ):
         self.api_key = api_key or OPENCLAW_API_KEY
@@ -189,7 +189,7 @@ class OpenClawClient:
 
                     return intent
         except Exception as e:
-            logger.warning(f"Chamada ao OpenClaw falhou ou offline ({e}).")
+            logger.warning(f"Chamada ao OpenClaw falhou ou offline ({type(e).__name__}: {e}).")
 
         # Fallback offline seguro para teste ou ausência de modelo
         fallback_intent = ParsedIntent(
