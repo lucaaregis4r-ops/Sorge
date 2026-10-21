@@ -12,6 +12,7 @@ from sorge_gateway.config import (
     BASE_DIR,
     DATABASE_PATH,
     OPENCLAW_API_KEY,
+    OPENCLAW_BASE_URL,
     OPENCLAW_MODEL,
     TIMEZONE,
 )
@@ -82,8 +83,8 @@ class OpenClawClient:
         db_path: Optional[Path] = None
     ):
         self.api_key = api_key or OPENCLAW_API_KEY
-        self.base_url = base_url or os.getenv("OPENCLAW_BASE_URL", "http://localhost:8000/v1")
-        self.model = model or OPENCLAW_MODEL or "gpt-4o-mini"
+        self.base_url = base_url or OPENCLAW_BASE_URL
+        self.model = model or OPENCLAW_MODEL or "openai/gpt-6-astra"
         self.timeout = timeout
         self.db_path = db_path
         self.system_prompt = load_system_prompt()

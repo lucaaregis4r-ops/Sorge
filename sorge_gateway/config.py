@@ -32,5 +32,6 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Integrações futuras
 N8N_WEBHOOK_BASE_URL = os.getenv("N8N_WEBHOOK_BASE_URL", "http://localhost:5678/webhook")
+OPENCLAW_BASE_URL = os.getenv("OPENCLAW_BASE_URL", "http://127.0.0.1:18789/v1")
 OPENCLAW_API_KEY = os.getenv("OPENCLAW_API_KEY", "")
 OPENCLAW_MODEL = os.getenv("OPENCLAW_MODEL", "")
