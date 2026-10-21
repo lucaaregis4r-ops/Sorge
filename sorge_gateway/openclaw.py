@@ -27,6 +27,13 @@ class ActionType(str, Enum):
     REMINDER = "REMINDER"
     UNKNOWN = "UNKNOWN"
 
+class EventItem(BaseModel):
+    title: str
+    date: str
+    time: Optional[str] = "09:00"
+    duration_minutes: Optional[int] = 60
+    reminders: List[int] = Field(default_factory=lambda: [120, 30])
+
 class ParsedIntent(BaseModel):
     """Schema Pydantic estrito para saída do modelo de raciocínio."""
     action: ActionType = ActionType.UNKNOWN
@@ -35,9 +42,26 @@ class ParsedIntent(BaseModel):
     time: Optional[str] = None
     duration_minutes: Optional[int] = 60
     reminders: List[int] = Field(default_factory=lambda: [120, 30])
+    events: List[EventItem] = Field(default_factory=list)
     target_id: Optional[int] = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     clarification_needed: Optional[str] = None
+
+    def get_events(self) -> List[EventItem]:
+        """Retorna lista de eventos consolidados (múltiplos ou individual)."""
+        if self.events:
+            return self.events
+        if self.title and self.date:
+            return [
+                EventItem(
+                    title=self.title,
+                    date=self.date,
+                    time=self.time or "09:00",
+                    duration_minutes=self.duration_minutes or 60,
+                    reminders=self.reminders or [120, 30]
+                )
+            ]
+        return []
 
     def is_executable(self, min_confidence: float = 0.70) -> bool:
         """Determina se a intenção possui confiança suficiente para execução sem ambiguidade."""
@@ -45,7 +69,7 @@ class ParsedIntent(BaseModel):
             return False
         if self.action == ActionType.UNKNOWN:
             return False
-        if self.action == ActionType.CREATE_EVENT and not (self.title and self.date):
+        if self.action == ActionType.CREATE_EVENT and not self.get_events():
             return False
         return True
 
@@ -79,7 +103,7 @@ class OpenClawClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 30.0,
+        timeout: float = 90.0,
         db_path: Optional[Path] = None
     ):
         self.api_key = api_key or OPENCLAW_API_KEY
@@ -93,16 +117,26 @@ class OpenClawClient:
         self,
         user_message: str,
         current_date_str: str,
-        update_id: Optional[int] = None
+        update_id: Optional[int] = None,
+        history: Optional[List[Dict[str, str]]] = None
     ) -> ParsedIntent:
         """
-        Envia a mensagem ao OpenClaw com contexto mínimo (data atual e fuso)
-        e valida o schema retornado via Pydantic.
+        Envia a mensagem ao OpenClaw com histórico recente e contexto temporal,
+        validando o schema retornado via Pydantic.
         """
-        # Contexto mínimo rigoroso
+        hist_text = ""
+        if history:
+            hist_lines = []
+            for h in history:
+                role_label = "Assistente" if h.get("role") == "assistant" else "Usuário"
+                content_preview = h.get("content", "").strip()
+                hist_lines.append(f"[{role_label}]: {content_preview}")
+            hist_text = "Histórico recente da conversa:\n" + "\n".join(hist_lines) + "\n\n"
+
         context_msg = (
             f"Data de hoje: {current_date_str} (fuso {TIMEZONE}).\n"
-            f"Mensagem do usuário: \"{user_message}\""
+            f"{hist_text}"
+            f"Nova mensagem do usuário: \"{user_message}\""
         )
 
         headers = {

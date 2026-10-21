@@ -41,6 +41,15 @@ CREATE TABLE IF NOT EXISTS processed_updates (
     processed_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS conversation_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 -- Índices para buscas rápidas de lembretes pendentes e estatísticas
 CREATE INDEX IF NOT EXISTS idx_reminders_status_send ON reminders(status, send_at);
 CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_conv_user ON conversation_history(user_id, created_at);

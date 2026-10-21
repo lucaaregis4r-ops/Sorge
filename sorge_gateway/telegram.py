@@ -20,10 +20,12 @@ from sorge_gateway.config import (
 )
 from sorge_gateway.database import (
     get_db_connection,
+    get_recent_conversation_history,
     get_upcoming_events,
     is_update_processed,
     mark_update_processed,
     record_usage,
+    save_conversation_message,
 )
 from sorge_gateway.logger import log_event, logger
 from sorge_gateway.n8n import default_n8n_client
@@ -352,54 +354,99 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
             await update.message.reply_text(f"⚠️ Compromisso #{result.target_id} não encontrado ou já cancelado.")
         return
 
-    # 6. Roteamento para OpenClaw (Linguagem Natural - Fase 5)
+    user_id = update.effective_user.id
+    history = get_recent_conversation_history(user_id=user_id, limit=6)
+    save_conversation_message(user_id, "user", user_text)
+
+    # 6. Roteamento para OpenClaw (Linguagem Natural com histórico - Fase 5+)
     cur_date = get_current_date()
     intent = await default_openclaw_client.interpret_message(
         user_message=user_text,
         current_date_str=cur_date.strftime("%Y-%m-%d"),
-        update_id=update_id
+        update_id=update_id,
+        history=history
     )
 
     if intent.is_executable(min_confidence=0.70):
-        if intent.action == ActionType.CREATE_EVENT and intent.title and intent.date:
-            hora_inicio_str = intent.time or "09:00"
-            start_iso = f"{intent.date}T{hora_inicio_str}:00"
-            dur = intent.duration_minutes or 60
+        if intent.action == ActionType.CREATE_EVENT:
+            events_to_create = intent.get_events()
+            if len(events_to_create) == 1:
+                ev = events_to_create[0]
+                hora_inicio_str = ev.time or "09:00"
+                start_iso = f"{ev.date}T{hora_inicio_str}:00"
+                dur = ev.duration_minutes or 60
 
-            try:
-                dt_start = datetime.fromisoformat(start_iso)
-                dt_end = dt_start + timedelta(minutes=dur)
-                data_formatada = dt_start.strftime("%d/%m/%Y")
-                hora_formatada = f"{dt_start.strftime('%H:%M')}–{dt_end.strftime('%H:%M')}"
-            except Exception:
-                data_formatada = intent.date
-                hora_formatada = hora_inicio_str
+                try:
+                    dt_start = datetime.fromisoformat(start_iso)
+                    dt_end = dt_start + timedelta(minutes=dur)
+                    data_formatada = dt_start.strftime("%d/%m/%Y")
+                    hora_formatada = f"{dt_start.strftime('%H:%M')}–{dt_end.strftime('%H:%M')}"
+                except Exception:
+                    data_formatada = ev.date
+                    hora_formatada = hora_inicio_str
 
-            await default_n8n_client.create_event(
-                title=intent.title,
-                start_at=start_iso,
-                duration_minutes=dur,
-                reminders_minutes=intent.reminders
-            )
+                await default_n8n_client.create_event(
+                    title=ev.title,
+                    start_at=start_iso,
+                    duration_minutes=dur,
+                    reminders_minutes=ev.reminders
+                )
 
-            resposta = (
-                f"✅ {intent.title} marcado\n"
-                f"📅 {data_formatada}\n"
-                f"🕑 {hora_formatada}"
-            )
-            await update.message.reply_text(resposta)
-            return
+                resposta = (
+                    f"✅ {ev.title} marcado\n"
+                    f"📅 {data_formatada}\n"
+                    f"🕑 {hora_formatada}"
+                )
+                await update.message.reply_text(resposta)
+                save_conversation_message(user_id, "assistant", resposta)
+                return
+
+            elif len(events_to_create) > 1:
+                summaries = []
+                for ev in events_to_create:
+                    hora_inicio_str = ev.time or "09:00"
+                    start_iso = f"{ev.date}T{hora_inicio_str}:00"
+                    dur = ev.duration_minutes or 60
+
+                    try:
+                        dt_start = datetime.fromisoformat(start_iso)
+                        dt_end = dt_start + timedelta(minutes=dur)
+                        data_formatada = dt_start.strftime("%d/%m/%Y")
+                        hora_formatada = f"{dt_start.strftime('%H:%M')}–{dt_end.strftime('%H:%M')}"
+                    except Exception:
+                        data_formatada = ev.date
+                        hora_formatada = hora_inicio_str
+
+                    await default_n8n_client.create_event(
+                        title=ev.title,
+                        start_at=start_iso,
+                        duration_minutes=dur,
+                        reminders_minutes=ev.reminders
+                    )
+                    summaries.append(f"• {ev.title} — {data_formatada} às {hora_formatada}")
+
+                resposta = (
+                    f"✅ {len(events_to_create)} compromissos agendados com sucesso:\n"
+                    + "\n".join(summaries)
+                    + "\n🔔 Lembretes configurados para cada um!"
+                )
+                await update.message.reply_text(resposta)
+                save_conversation_message(user_id, "assistant", resposta)
+                return
 
         elif intent.action == ActionType.LIST_EVENTS:
             target_str = intent.date or cur_date.strftime("%Y-%m-%d")
             events = await default_n8n_client.list_events(target_str)
             msg = format_events_list(events, f"Agenda para {target_str}")
             await update.message.reply_text(msg)
+            save_conversation_message(user_id, "assistant", msg)
             return
 
         elif intent.action == ActionType.CANCEL_EVENT and intent.target_id:
             await default_n8n_client.delete_event(intent.target_id)
-            await update.message.reply_text(f"✅ Compromisso #{intent.target_id} cancelado com sucesso.")
+            resposta = f"✅ Compromisso #{intent.target_id} cancelado com sucesso."
+            await update.message.reply_text(resposta)
+            save_conversation_message(user_id, "assistant", resposta)
             return
 
     # Pedido de esclarecimento em caso de baixa confiança ou dados incompletos
@@ -409,6 +456,7 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
            "Poderia reenviar especificando o dia e o horário? (Ex: 'marca dentista amanhã às 14h')"
     )
     await update.message.reply_text(msg_clarification)
+    save_conversation_message(user_id, "assistant", msg_clarification)
 
 async def on_post_init(app: Application) -> None:
     """Executa o startup catch-up e inicia o despachante periódico de lembretes."""

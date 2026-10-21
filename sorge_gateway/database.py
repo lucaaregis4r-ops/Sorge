@@ -253,3 +253,44 @@ def get_reminders_for_event(event_id: int, db_path: Optional[Path] = None) -> li
             (event_id,)
         )
         return [dict(row) for row in cursor.fetchall()]
+
+# --- Memória de Conversação Recente (Multi-turn) ---
+
+def save_conversation_message(
+    user_id: int,
+    role: str,
+    content: str,
+    db_path: Optional[Path] = None
+) -> None:
+    """Salva mensagem recente de usuário ou assistente no histórico conversacional."""
+    now = datetime.now(ZoneInfo(config.TIMEZONE)).isoformat()
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO conversation_history (user_id, role, content, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_id, role, content, now)
+        )
+
+def get_recent_conversation_history(
+    user_id: int,
+    limit: int = 6,
+    db_path: Optional[Path] = None
+) -> list[dict]:
+    """Recupera as últimas mensagens ordenadas cronologicamente (da mais antiga para a mais recente)."""
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT role, content, created_at
+            FROM conversation_history
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, limit)
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        return list(reversed(rows))
