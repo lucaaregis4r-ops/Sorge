@@ -5,15 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Área de trabalho/Projetos/Backup/Sorge
-ExecStart=%h/Área de trabalho/Projetos/Backup/Sorge/.venv/bin/python3 -m sorge_gateway.main
+WorkingDirectory=/home/lucasregis/Área de trabalho/Projetos/Backup/Sorge
+ExecStart=/bin/bash "/home/lucasregis/Área de trabalho/Projetos/Backup/Sorge/scripts/start-sorge.sh" --foreground
 Restart=always
 RestartSec=5s
 Environment=PYTHONUNBUFFERED=1
-
-# Gravação de logs
-StandardOutput=append:%h/Área de trabalho/Projetos/Backup/Sorge/logs/sorge.log
-StandardError=append:%h/Área de trabalho/Projetos/Backup/Sorge/logs/error.log
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target

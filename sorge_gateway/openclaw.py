@@ -79,12 +79,12 @@ class OpenClawClient:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 10.0,
+        timeout: float = 30.0,
         db_path: Optional[Path] = None
     ):
         self.api_key = api_key or OPENCLAW_API_KEY
         self.base_url = base_url or OPENCLAW_BASE_URL
-        self.model = model or OPENCLAW_MODEL or "openai/gpt-6-astra"
+        self.model = model or OPENCLAW_MODEL or "openclaw/nova-onda"
         self.timeout = timeout
         self.db_path = db_path
         self.system_prompt = load_system_prompt()
@@ -117,8 +117,7 @@ class OpenClawClient:
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": context_msg}
             ],
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"}
+            "temperature": 0.1
         }
 
         # Tentativa de chamada HTTP para o provedor

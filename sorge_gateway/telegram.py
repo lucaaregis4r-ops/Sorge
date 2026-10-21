@@ -433,7 +433,6 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("uso", usage_handler))
     app.add_handler(CommandHandler("hoje", today_handler))
     app.add_handler(CommandHandler("amanha", tomorrow_handler))
-    app.add_handler(CommandHandler("amanhã", tomorrow_handler))
     app.add_handler(CommandHandler("agenda", agenda_handler))
 
     # Handler para todas as mensagens de texto naturais
