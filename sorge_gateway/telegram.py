@@ -1,8 +1,10 @@
 """Módulo de integração com a Telegram Bot API via long polling, Smart Router e n8n."""
+import asyncio
 import time
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 import httpx
+import telegram.error
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -11,9 +13,11 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from sorge_gateway.config import (
     DATABASE_PATH,
+    OPENCLAW_BASE_URL,
     TELEGRAM_ALLOWED_USER_ID,
     TELEGRAM_BOT_TOKEN,
     TIMEZONE,
@@ -74,6 +78,42 @@ async def check_n8n_status() -> bool:
     except Exception:
         return False
 
+async def check_openclaw_status() -> bool:
+    """Verifica se a instância local do OpenClaw está ativa."""
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            res = await client.get(f"{OPENCLAW_BASE_URL}/models")
+            return res.status_code == 200
+    except Exception:
+        return False
+
+async def safe_reply(update: Update, text: str, user_id: int | None = None, max_retries: int = 3) -> bool:
+    """Envia resposta ao Telegram com retry automático contra oscilações de rede."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            if update.message:
+                await update.message.reply_text(text)
+            elif update.effective_chat:
+                await update.get_bot().send_message(chat_id=update.effective_chat.id, text=text)
+            if user_id:
+                save_conversation_message(user_id, "assistant", text)
+            return True
+        except (telegram.error.TimedOut, telegram.error.NetworkError) as err:
+            logger.warning(f"Tentativa {attempt}/{max_retries} de envio ao Telegram falhou ({type(err).__name__}: {err}).")
+            if attempt < max_retries:
+                await asyncio.sleep(1.5 * attempt)
+            else:
+                logger.error(f"Falha definitiva ao enviar mensagem após {max_retries} tentativas: {err}")
+                if user_id:
+                    save_conversation_message(user_id, "assistant", text)
+                return False
+        except Exception as e:
+            logger.error(f"Erro inesperado no envio de resposta ao Telegram: {e}")
+            if user_id:
+                save_conversation_message(user_id, "assistant", text)
+            return False
+    return False
+
 def format_events_list(events: list[dict], title: str) -> str:
     """Formata lista de compromissos para exibição no Telegram."""
     if not events:
@@ -120,7 +160,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Posso cuidar da sua agenda e dos seus lembretes locais.\n"
         "Digite /ajuda para ver os comandos ou /status para verificar a saúde do assistente."
     )
-    await update.message.reply_text(texto)
+    await safe_reply(update, texto)
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Manipulador do comando /status."""
@@ -134,6 +174,7 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     mark_update_processed(update_id)
     db_ok = await check_database_status()
     n8n_ok = await check_n8n_status()
+    openclaw_ok = await check_openclaw_status()
     uptime = get_uptime_str()
 
     record_usage(
@@ -146,17 +187,18 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     status_db = "OK" if db_ok else "ERRO"
     status_n8n = "OK" if n8n_ok else "Offline (fallback local)"
+    status_openclaw = "OK (GPT Luna)" if openclaw_ok else "Offline"
     texto = (
         "🟢 Sorge online (Modo Local)\n\n"
         f"• Telegram: OK (long polling)\n"
         f"• Banco SQLite: {status_db}\n"
         f"• n8n: {status_n8n}\n"
         f"• Smart Router: OK (Zero-LLM)\n"
-        f"• OpenClaw: Pendente (Fase 4)\n\n"
+        f"• OpenClaw (IA): {status_openclaw}\n\n"
         f"⏱️ Ativo há: {uptime}\n"
         f"📍 Fuso horário: {TIMEZONE}"
     )
-    await update.message.reply_text(texto)
+    await safe_reply(update, texto)
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Manipulador do comando /ajuda."""
@@ -397,8 +439,7 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
                     f"📅 {data_formatada}\n"
                     f"🕑 {hora_formatada}"
                 )
-                await update.message.reply_text(resposta)
-                save_conversation_message(user_id, "assistant", resposta)
+                await safe_reply(update, resposta, user_id=user_id)
                 return
 
             elif len(events_to_create) > 1:
@@ -430,23 +471,20 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
                     + "\n".join(summaries)
                     + "\n🔔 Lembretes configurados para cada um!"
                 )
-                await update.message.reply_text(resposta)
-                save_conversation_message(user_id, "assistant", resposta)
+                await safe_reply(update, resposta, user_id=user_id)
                 return
 
         elif intent.action == ActionType.LIST_EVENTS:
             target_str = intent.date or cur_date.strftime("%Y-%m-%d")
             events = await default_n8n_client.list_events(target_str)
             msg = format_events_list(events, f"Agenda para {target_str}")
-            await update.message.reply_text(msg)
-            save_conversation_message(user_id, "assistant", msg)
+            await safe_reply(update, msg, user_id=user_id)
             return
 
         elif intent.action == ActionType.CANCEL_EVENT and intent.target_id:
             await default_n8n_client.delete_event(intent.target_id)
             resposta = f"✅ Compromisso #{intent.target_id} cancelado com sucesso."
-            await update.message.reply_text(resposta)
-            save_conversation_message(user_id, "assistant", resposta)
+            await safe_reply(update, resposta, user_id=user_id)
             return
 
     # Pedido de esclarecimento em caso de baixa confiança ou dados incompletos
@@ -455,13 +493,11 @@ async def smart_router_message_handler(update: Update, context: ContextTypes.DEF
         or "🤔 Não consegui identificar com certeza todos os dados do compromisso (data ou título).\n"
            "Poderia reenviar especificando o dia e o horário? (Ex: 'marca dentista amanhã às 14h')"
     )
-    await update.message.reply_text(msg_clarification)
-    save_conversation_message(user_id, "assistant", msg_clarification)
+    await safe_reply(update, msg_clarification, user_id=user_id)
 
 async def on_post_init(app: Application) -> None:
     """Executa o startup catch-up e inicia o despachante periódico de lembretes."""
     if TELEGRAM_ALLOWED_USER_ID:
-        import asyncio
         logger.info("Executando startup catch-up de lembretes...")
         await startup_catchup(bot=app.bot, chat_id=TELEGRAM_ALLOWED_USER_ID)
         asyncio.create_task(reminder_dispatcher_loop(bot=app.bot, chat_id=TELEGRAM_ALLOWED_USER_ID, poll_interval=30))
@@ -471,7 +507,13 @@ def build_application() -> Application:
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN não foi configurado no arquivo .env.")
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(on_post_init).build()
+    request = HTTPXRequest(
+        connect_timeout=20.0,
+        read_timeout=30.0,
+        write_timeout=20.0,
+        pool_timeout=10.0,
+    )
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request).post_init(on_post_init).build()
 
     # Comandos
     app.add_handler(CommandHandler("start", start_handler))
