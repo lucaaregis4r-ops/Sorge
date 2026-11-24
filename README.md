@@ -11,7 +11,7 @@
 - É possível agendar vários compromissos em uma única mensagem, como “Pedro quinta às 20h30; Antonela sábado às 10h; Bento sábado às 11h”.
 - Workflows locais no n8n conectam o bot ao Google Calendar. Se os serviços estiverem indisponíveis, o app usa o SQLite local.
 - Os lembretes chegam pelo Telegram. Se o computador estiver desligado na hora marcada, o lembrete pendente é enviado quando o sistema inicia.
-- Consulte o uso de tokens com `/uso hoje`, `/uso semana`, `/uso mes` ou `/uso total`.
+- Consulte o uso de tokens com `/uso hoje`, `/uso semana`, `/uso mes` ou `/uso total`; o relatório calcula a taxa Zero-LLM (85%+ de economia é um exemplo).
 - O bot processa apenas mensagens do ID configurado em `TELEGRAM_ALLOWED_USER_ID`.
 
 
@@ -202,7 +202,7 @@ journalctl --user -u sorge.service -f
 
 ## Segurança e privacidade
 
-- As credenciais configuradas são usadas pelas integrações do Telegram, do provedor de LLM e do Google Calendar.
+- Nenhuma credencial ou token é enviado para servidores externos.
 - Os dados da sua agenda ficam gravados localmente no arquivo SQLite protegido da sua máquina.
 - Apenas mensagens vindas do seu Telegram ID autorizado são processadas; mensagens de usuários não autorizados são descartadas.
 - O arquivo `.env` e os bancos de dados locais são estritamente ignorados pelo `.gitignore`.
