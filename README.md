@@ -1,24 +1,21 @@
-# 🧠 SORGE — Assistente Pessoal Local Inteligente & Econômico em Tokens
+# Sorge — assistente pessoal para Telegram
 
-> **SORGE** é um assistente pessoal local executado inteiramente no seu próprio computador (Linux/macOS), integrado ao **Telegram**, focado em **máxima privacidade**, **agilidade** e **economia extrema de tokens de IA**.
+> O Sorge roda localmente em Linux ou macOS e recebe comandos pelo Telegram. Ele usa SQLite para manter os dados locais e pode se conectar a serviços externos para interpretar mensagens e sincronizar a agenda.
 
----
 
-## 🚀 Destaques e Diferenciais
+## Recursos
 
-- ⚡ **Smart Router Determinístico (Zero-LLM):** Comandos comuns (`/agenda`, `/hoje`, `/amanha`, `/status`, `/ajuda`) e consultas de data/horário são processados **instantaneamente em < 5ms sem gastar 1 único token** de IA.
-- 🤖 **Intérprete com OpenClaw / LLM:** Frases livres e agendamentos complexos são interpretados por modelos locais ou via gateway OpenClaw (ex: GPT Luna, Astra, Ollama ou endpoints OpenAI-compatíveis), retornando **JSON estruturado estrito via Pydantic**.
-- 💬 **Memória Conversacional (Multi-Turn):** O assistente mantém o contexto das últimas mensagens, permitindo confirmações naturais em linguagem corrente (*"Sim"*, *"Desejo"*, *"Confirmo"*, *"Isso mesmo"*).
-- 📋 **Agendamento em Lote (Batch):** Capacidade de interpretar e agendar múltiplos compromissos em uma única mensagem (ex: *"Pedro quinta às 20h30; Antonela sábado às 10h; Bento sábado às 11h"*).
-- 🔄 **Integração com n8n & Google Calendar:** Criação, listagem e cancelamento assíncrono via workflows locais no n8n.
-- 🛡️ **Resiliência Offline Total:** Se o n8n ou o Google Calendar estiverem inacessíveis, o Sorge realiza **fallback transparente para o banco SQLite local** sem interromper o usuário.
-- ⏰ **Agendador de Lembretes Proporcionais:** Disparo de notificações automáticas via Telegram com mecanismo de **Startup Catch-up** (se o computador estava desligado na hora do compromisso, o lembrete pendente é notificado assim que o sistema inicia).
-- 📊 **Telemetria de Tokens & Custo em Tempo Real:** Acompanhe a economia gerada via `/uso hoje`, `/uso semana`, `/uso mes` ou `/uso total` com cálculo da taxa Zero-LLM (ex: 85%+ de economia).
-- 🔒 **Acesso Restrito:** Bloqueio automático de qualquer usuário que não corresponda ao `TELEGRAM_ALLOWED_USER_ID` configurado.
+- O roteador atende comandos como `/agenda`, `/hoje`, `/amanha`, `/status` e `/ajuda` sem chamar um LLM; as consultas comuns levam menos de 5 ms.
+- Mensagens livres e pedidos mais complexos passam por modelos locais ou por um gateway OpenClaw. A resposta é validada como JSON com Pydantic.
+- O bot mantém o contexto recente da conversa para confirmar compromissos em linguagem natural.
+- É possível agendar vários compromissos em uma única mensagem, como “Pedro quinta às 20h30; Antonela sábado às 10h; Bento sábado às 11h”.
+- Workflows locais no n8n conectam o bot ao Google Calendar. Se os serviços estiverem indisponíveis, o app usa o SQLite local.
+- Os lembretes chegam pelo Telegram. Se o computador estiver desligado na hora marcada, o lembrete pendente é enviado quando o sistema inicia.
+- Consulte o uso de tokens com `/uso hoje`, `/uso semana`, `/uso mes` ou `/uso total`.
+- O bot processa apenas mensagens do ID configurado em `TELEGRAM_ALLOWED_USER_ID`.
 
----
 
-## 🏗️ Arquitetura do Sistema
+## Arquitetura
 
 ```
                       ┌───────────────────────┐
@@ -52,9 +49,8 @@
                  └──────────────────────┘  └────────────────────┘
 ```
 
----
 
-## 📁 Estrutura de Diretórios
+## Estrutura
 
 ```text
 Sorge/
@@ -81,9 +77,8 @@ Sorge/
 └── requirements.txt     # Dependências Python
 ```
 
----
 
-## ⚙️ Pré-requisitos
+## Pré-requisitos
 
 1. **Python 3.12+** instalado.
 2. **Bot no Telegram:** Crie um bot gratuito via [@BotFather](https://t.me/BotFather) e pegue o token. Obtenha seu ID numérico do Telegram via [@userinfobot](https://t.me/userinfobot).
@@ -92,9 +87,8 @@ Sorge/
 4. **n8n Local (Opcional para Google Calendar):**
    - Instalação via Docker (`docker run -d --name n8n -p 5678:5678 n8nio/n8n`). Se não estiver rodando, o Sorge utiliza o SQLite local com 100% das funcionalidades ativas.
 
----
 
-## 📦 Instalação e Configuração
+## Instalação e configuração
 
 ### 1. Clonar o Repositório
 ```bash
@@ -146,9 +140,8 @@ python3 -c "from sorge_gateway.database import init_db; init_db()"
 pytest
 ```
 
----
 
-## 🚀 Como Executar
+## Executar
 
 ### Modo Interativo (Primeiro Plano)
 ```bash
@@ -174,9 +167,8 @@ Para acompanhar os logs em tempo real:
 journalctl --user -u sorge.service -f
 ```
 
----
 
-## 💬 Guia de Uso no Telegram
+## Usar no Telegram
 
 ### 1. Comandos Rápidos (Zero-LLM — 0 Tokens)
 | Comando | O que faz |
@@ -207,17 +199,15 @@ journalctl --user -u sorge.service -f
   - *Usuário:* *"Sim, desejo"*
   - *Sorge:* *"✅ Atendimento marcado para 21/10/2026 das 10:15 às 11:15"*
 
----
 
-## 🔒 Segurança e Privacidade
+## Segurança e privacidade
 
-- **Nenhuma credencial ou token é enviado para servidores externos.**
+- As credenciais configuradas são usadas pelas integrações do Telegram, do provedor de LLM e do Google Calendar.
 - Os dados da sua agenda ficam gravados localmente no arquivo SQLite protegido da sua máquina.
-- Apenas mensagens vindas do seu Telegram ID autorizado são processadas; mensagens de estranhos são sumariamente descartadas.
+- Apenas mensagens vindas do seu Telegram ID autorizado são processadas; mensagens de usuários não autorizados são descartadas.
 - O arquivo `.env` e os bancos de dados locais são estritamente ignorados pelo `.gitignore`.
 
----
 
-## 📄 Licença
+## Licença
 
 Distribuído sob a licença MIT. Consulte `LICENSE` para mais informações.
