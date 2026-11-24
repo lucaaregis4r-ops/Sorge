@@ -1,213 +1,51 @@
-# Sorge — assistente pessoal para Telegram
+# Sorge
 
-> O Sorge roda localmente em Linux ou macOS e recebe comandos pelo Telegram. Ele usa SQLite para manter os dados locais e pode se conectar a serviços externos para interpretar mensagens e sincronizar a agenda.
+Assistente pessoal no Telegram para consultar a agenda, registrar compromissos e receber lembretes. Comandos conhecidos são tratados por regras locais; pedidos em linguagem natural passam pelo modelo configurado.
 
+## Fluxo
 
-## Recursos
+![Diagrama do fluxo entre Telegram, regras locais, modelo opcional, n8n e SQLite](docs/diagrams/sorge-fluxo.svg)
 
-- O roteador atende comandos como `/agenda`, `/hoje`, `/amanha`, `/status` e `/ajuda` sem chamar um LLM; as consultas comuns levam menos de 5 ms.
-- Mensagens livres e pedidos mais complexos passam por modelos locais ou por um gateway OpenClaw. A resposta é validada como JSON com Pydantic.
-- O bot mantém o contexto recente da conversa para confirmar compromissos em linguagem natural.
-- É possível agendar vários compromissos em uma única mensagem, como “Pedro quinta às 20h30; Antonela sábado às 10h; Bento sábado às 11h”.
-- Workflows locais no n8n conectam o bot ao Google Calendar. Se os serviços estiverem indisponíveis, o app usa o SQLite local.
-- Os lembretes chegam pelo Telegram. Se o computador estiver desligado na hora marcada, o lembrete pendente é enviado quando o sistema inicia.
-- Consulte o uso de tokens com `/uso hoje`, `/uso semana`, `/uso mes` ou `/uso total`; o relatório calcula a taxa Zero-LLM (85%+ de economia é um exemplo).
-- O bot processa apenas mensagens do ID configurado em `TELEGRAM_ALLOWED_USER_ID`.
+O diagrama resume os caminhos do código. A integração com Google Calendar depende dos workflows locais do n8n; sem eles, os dados permanecem no SQLite local.
 
+## O que oferece
 
-## Arquitetura
-
-```
-                      ┌───────────────────────┐
-                      │   Usuário (Telegram)  │
-                      └──────────┬────────────┘
-                                 │ Long Polling
-                                 ▼
-                   ┌─────────────────────────────┐
-                   │        SORGE GATEWAY        │
-                   │   (FastAPI / Python Async)  │
-                   └──────┬───────────────┬──────┘
-                          │               │
-        [Comandos / Regex]│               │[Linguagem Natural Livre]
-                          ▼               ▼
-                 ┌────────────────┐   ┌───────────────────────┐
-                 │  Smart Router  │   │     OpenClaw / LLM    │
-                 │   (Zero-LLM)   │   │(GPT Luna / Pydantic)  │
-                 └────────┬───────┘   └───────────┬───────────┘
-                          │                       │
-                          └───────────┬───────────┘
-                                      ▼
-                   ┌──────────────────────────────────────┐
-                   │       Hub de Execução e Fallback     │
-                   └──────────┬────────────────┬──────────┘
-                              │                │
-            [Normal / Online] │                │ [Offline Fallback]
-                              ▼                ▼
-                 ┌──────────────────────┐  ┌────────────────────┐
-                 │  n8n Local (Docker)  │  │    SQLite Local    │
-                 │   Google Calendar    │  │   (data/sorge.db)  │
-                 └──────────────────────┘  └────────────────────┘
-```
-
-
-## Estrutura
-
-```text
-Sorge/
-├── database/            # Schema DDL e migrações SQLite (events, reminders, usage, history)
-├── data/                # Banco de dados local sorge.db (ignorado no Git)
-├── logs/                # Logs rotativos estruturados sorge.log / error.log
-├── n8n/                 # Templates JSON exportáveis dos workflows WF-01 a WF-07
-├── prompts/             # Prompts de sistema com validação JSON estrita (intent-parser.md)
-├── scripts/             # Scripts operacionais (start, stop, status, install-systemd)
-├── sorge_gateway/       # Código-fonte principal da aplicação
-│   ├── config.py        # Carregador de variáveis de ambiente
-│   ├── database.py      # Camada de persistência SQLite e histórico conversacional
-│   ├── logger.py        # Logger com rotação e formatação estruturada
-│   ├── main.py          # Ponto de entrada do serviço
-│   ├── n8n.py           # Cliente assíncrono para webhooks do n8n
-│   ├── openclaw.py      # Intérprete estruturado e cliente OpenClaw / OpenAI
-│   ├── reminders.py     # Agendador de lembretes e startup catch-up
-│   ├── router.py        # Smart Router determinístico (Zero-LLM)
-│   ├── telegram.py      # Bot Telegram, deduplicação e roteamento de mensagens
-│   └── usage.py         # Cálculo de estatísticas e telemetria de tokens
-├── systemd/             # Unit file do systemd --user para execução como serviço
-├── tests/               # Suíte completa de testes automatizados com pytest (37 testes)
-├── .env.example         # Modelo de variáveis de ambiente
-└── requirements.txt     # Dependências Python
-```
-
-
-## Pré-requisitos
-
-1. **Python 3.12+** instalado.
-2. **Bot no Telegram:** Crie um bot gratuito via [@BotFather](https://t.me/BotFather) e pegue o token. Obtenha seu ID numérico do Telegram via [@userinfobot](https://t.me/userinfobot).
-3. **Provedor de LLM / OpenClaw:**
-   - Instalação local do [OpenClaw](https://openclaw.ai) (com porta HTTP habilitada) **OU** qualquer endpoint compatível com OpenAI (Ollama, vLLM, OpenAI oficial).
-4. **n8n Local (Opcional para Google Calendar):**
-   - Instalação via Docker (`docker run -d --name n8n -p 5678:5678 n8nio/n8n`). Se não estiver rodando, o Sorge utiliza o SQLite local com 100% das funcionalidades ativas.
-
-
-## Instalação e configuração
-
-### 1. Clonar o Repositório
-```bash
-git clone https://github.com/lucaaregis4r-ops/Sorge.git
-cd Sorge
-```
-
-### 2. Configurar o Ambiente Virtual
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 3. Configurar as Variáveis de Ambiente
-Copie o arquivo de exemplo:
-```bash
-cp .env.example .env
-```
-Edite o arquivo `.env` com os seus dados:
-```env
-# Telegram Bot
-TELEGRAM_BOT_TOKEN=seu_bot_token_aqui
-TELEGRAM_ALLOWED_USER_ID=seu_telegram_user_id_aqui
-
-# Banco de Dados
-DATABASE_PATH=data/sorge.db
-
-# Configurações do Sistema
-TIMEZONE=America/Sao_Paulo
-LOG_LEVEL=INFO
-
-# n8n Webhook / API
-N8N_WEBHOOK_BASE_URL=http://localhost:5678/webhook
-
-# OpenClaw Local / OpenAI Compatível
-OPENCLAW_BASE_URL=http://127.0.0.1:18789/v1
-OPENCLAW_API_KEY=seu_openclaw_token_aqui
-OPENCLAW_MODEL=openclaw/seu-agente
-```
-
-### 4. Inicializar o Banco de Dados
-```bash
-python3 -c "from sorge_gateway.database import init_db; init_db()"
-```
-
-### 5. Executar os Testes
-```bash
-pytest
-```
-
+- Comandos como `/hoje`, `/amanha`, `/agenda`, `/status`, `/ajuda` e `/uso`.
+- Registro e confirmação de compromissos em linguagem natural.
+- Lembretes pelo Telegram, incluindo recuperação de lembretes pendentes quando o serviço inicia.
+- Integração opcional com Google Calendar por n8n.
+- Restrição de uso ao identificador configurado em `TELEGRAM_ALLOWED_USER_ID`.
 
 ## Executar
 
-### Modo Interativo (Primeiro Plano)
+Requer Python 3.12 ou superior. Crie um bot pelo BotFather e configure o projeto:
+
+```bash
+git clone https://github.com/lucaaregis4r-ops/Sorge.git
+cd Sorge
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Edite `.env` com o token do bot e o ID autorizado. Para interpretar mensagens livres, configure um endpoint compatível com a API OpenAI, local ou remoto. O n8n só é necessário para a sincronização com o Google Calendar.
+
+Inicie o serviço em primeiro plano:
+
 ```bash
 ./scripts/start-sorge.sh --foreground
 ```
 
-### Modo Segundo Plano (Background)
-```bash
-./scripts/start-sorge.sh
-./scripts/status-sorge.sh
-./scripts/stop-sorge.sh
-```
+Para executar em segundo plano, consulte os comandos em `scripts/`. O banco SQLite fica em `data/sorge.db`.
 
-### Como Serviço de Sistema (`systemd --user`)
-Para inicializar automaticamente ao ligar o computador:
-```bash
-./scripts/install-systemd.sh
-systemctl --user start sorge.service
-systemctl --user status sorge.service
-```
-Para acompanhar os logs em tempo real:
-```bash
-journalctl --user -u sorge.service -f
-```
+## Dados e privacidade
 
+Comandos diretos e armazenamento do banco são locais. Mensagens que precisam de interpretação são enviadas ao endpoint configurado; se ele for hospedado por terceiros, esse serviço recebe o texto enviado. O Telegram também recebe as mensagens necessárias para operar o bot. Mantenha `.env` e o banco fora do Git e configure apenas o ID autorizado.
 
-## Usar no Telegram
+## Documentação
 
-### 1. Comandos Rápidos (Zero-LLM — 0 Tokens)
-| Comando | O que faz |
-| :--- | :--- |
-| `/start` | Mensagem inicial de boas-vindas e verificação de autorização. |
-| `/ajuda` | Manual completo de uso e comandos. |
-| `/hoje` | Lista os compromissos agendados para a data de hoje. |
-| `/amanha` | Lista os compromissos agendados para o dia seguinte. |
-| `/agenda` | Consulta a agenda do dia ou de uma data específica (`/agenda 25/10/2026`). |
-| `/status` | Diagnóstico de integridade (Gateway, SQLite, n8n, OpenClaw, Uptime). |
-| `/uso` | Relatório de economia e telemetria de tokens (`/uso hoje`, `/uso semana`, etc.). |
-
-### 2. Linguagem Natural Simples (Zero-LLM)
-- `"agenda hoje"` ou `"agenda amanhã"`
-- `"agenda 25/10/2026"`
-- `"cancela 3"` ou `"cancelar compromisso #3"`
-
-### 3. Linguagem Natural Avançada (OpenClaw / GPT Luna)
-- **Compromisso Único:**
-  - *"Agendar dentista na sexta às 14h"*
-  - *"Reunião com fisioterapia quinta depois do almoço"*
-  - *"Almoço em família domingo ao meio-dia"*
-- **Múltiplos Compromissos em Lote:**
-  - *"Pedro quinta às 20h30; Antonela sábado às 10h; Bento sábado às 11h; Gabriel terça às 10h; Ana Beatriz sexta às 10h"*
-- **Conversação com Confirmação:**
-  - *Usuário:* *"Gostaria de marcar atendimento toda quarta às 10h15"*
-  - *Sorge:* *"Você deseja agendar atendimento às quartas às 10h15 começando hoje?"*
-  - *Usuário:* *"Sim, desejo"*
-  - *Sorge:* *"✅ Atendimento marcado para 21/10/2026 das 10:15 às 11:15"*
-
-
-## Segurança e privacidade
-
-- Nenhuma credencial ou token é enviado para servidores externos.
-- Os dados da sua agenda ficam gravados localmente no arquivo SQLite protegido da sua máquina.
-- Apenas mensagens vindas do seu Telegram ID autorizado são processadas; mensagens de usuários não autorizados são descartadas.
-- O arquivo `.env` e os bancos de dados locais são estritamente ignorados pelo `.gitignore`.
-
-
-## Licença
-
-Distribuído sob a licença MIT. Consulte `LICENSE` para mais informações.
+- [Plano de implementação V1](docs/plans/v1-local-telegram.md)
+- [Prompt de interpretação](prompts/intent-parser.md)
+- [Código e migrações do banco](database/)
+- [Licença MIT](LICENSE)
